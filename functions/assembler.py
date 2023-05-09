@@ -37,7 +37,25 @@ SYNTAX = {
 
 }
 
-variables = []
+variables = {}
+#returns the length of opcode with out ZERO or repeats
+def opLength(opcode):
+    length = 1
+    for index, param in enumerate(opcode[1:]):
+        if param == 'ZERO' or param == opcode[index-1]: #doesnt count of ZERO or duplicate parameter since it gets same index
+            continue
+        else:
+            length += 1
+    return length
+
+#get length of command before comments
+def commandLength(command):
+    length = 0
+    for part in command:
+        if part.startswith('//'): #stop count when reach a comment
+            break
+        length += 1
+    return length
 
 def hex_to_binary(hex_string):
     hex_value = int(hex_string, 16)  # convert hex string to integer
@@ -48,13 +66,15 @@ def hex_to_binary(hex_string):
 #get the binary for the operands
 def parse_operands(operand, parts):
     if operand.startswith('reg'):
-        return hex_to_binary(parts[int(operand.split('-')[1])])
+        regHex = variables.get(parts[int(operand.split('-')[1])]) #get hex register number connected to variable name
+        return hex_to_binary(regHex)
+        #return hex_to_binary(parts[int(operand.split('-')[1])])
     elif operand == 'Address' or operand == 'memory address':
         return hex_to_binary(parts[len(parts)-1])
     elif operand == 'number':
         return format(int(parts[2]), '08b')
-    elif operand == 'FLAG':
-        return '00' + parts[1]
+    #elif operand == 'FLAG': #redundant as JMP and BIV are handled seperately
+    #    return '00' + parts[1]
     else:
         return -1
 
@@ -68,9 +88,9 @@ def parse_jumps(program_dir, parts):
                 lineParts = ['']
             if SYNTAX.get(lineParts[0]): #if its a command add one to address
                 Address += 1
-            if (parts[0] == 'JMP' and lineParts[0] == 'POS' and parts[1] == lineParts[1]): #lineParts out of index error shouldnt matter because POS is checked first
+            if (parts[0] == 'JMP' and lineParts[0] == 'POS' and len(lineParts) >= 2 and parts[1] == lineParts[1]): #lineParts out of index error shouldnt matter because POS is checked first
                 return '10110000' + format(Address, '08b'), None
-            if (parts[0] == 'BIV' and lineParts[0] == 'POS' and parts[2] == lineParts[1]):
+            if (parts[0] == 'BIV' and lineParts[0] == 'POS' and len(lineParts) >= 2 and parts[2] == lineParts[1]):
                 if parts[1] == 'Z': #find flag binary
                     flag = '01'
                 elif parts[1] == 'P':
@@ -80,7 +100,7 @@ def parse_jumps(program_dir, parts):
                 else:
                     return None, f'no Flag found {parts}'
                 return '110000' + flag + format(Address, '08b'), None
-        return None, f'Error: could not find POS {parts}' #return error if POS not found
+        return None, f'could not find POS {parts}' #return error if POS not found
 
 
 #returns the binary for the input line
@@ -91,38 +111,52 @@ def getBinary(line, program_dir):
         return None, None
     opcode = SYNTAX.get(parts[0])
     if opcode: #core instructions
+        
+        if opLength(opcode) != commandLength(parts): #check length of command and raise error if incorrect
+            return None, f'incorrect parameter count: {parts}'
+        
         if parts[0] == 'JMP' or parts[0] == 'BIV': #special case for JMP and BIV
             binary, error = parse_jumps(program_dir, parts)
             return binary, error
         
         binary = opcode[0] #set opcode binary (first 4 bits)
-        for operand in opcode[1:]: #s is syntax index
+        for operand in opcode[1:]: #get binary for parameters
             if operand == 'ZERO':
                 binary += '0000'
             else:
                 value = parse_operands(operand, parts)
                 if value is None:
-                    return None, f'Error: could not parse operand {operand}'
-                binary += value
-            
+                    return None, f'could not parse operand {operand}'
+                binary += value    
         return binary, None
-    elif parts[0] == 'POS' or parts[0].startswith('//') or not parts[0]: #ignore codes
+    
+    elif parts[0] == 'DEF':
+        variables.update({parts[1] : parts[2]})
+        return None, None
+    elif parts[0] == 'POS':
+        if len(parts) < 2:
+            return None, f'POS formmated incorrectly {parts}'
+        return None, None
+    elif parts[0].startswith('//') or not parts[0]: #ignore codes
         return None, None
     else:
-        return None, f'Error: Unknown Opcode {opcode} in Line: {line}'
+        return None, f'Unknown Opcode {opcode} in Line: {line}'
 
 def assemble(file_name):
     program_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'programs', file_name))
+    binary_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'binary.txt'))
     with open(program_dir, 'r') as readFile:
+        with open(binary_dir, 'w') as writeFile:
             address = 0
-            for line in readFile:
+            for i, line in enumerate(readFile):
                 binary, error = getBinary(line, program_dir)
                 if (error): #check errors
-                    print(error)
+                    print(f'Error on line {i+1}: {error}')
                 elif (binary):
-                    print(format(address, '08b') + ' | ' + binary)
+                    print(format(address, '08b') + ' | ' + binary + ' | ' + line.strip('\n'))
+                    writeFile.write(binary + '\n')
                     address += 1
 
                 
 
-assemble('fibbinaci.txt')
+assemble('fibbinaci.asm')
